@@ -93,16 +93,74 @@ object QuoraPairs extends App{
   
   val header = data.first() /* HEADER */
   val input = data.filter(row => row != header) /*removed header */
-  /*
-  input.toDF.show(10, false) // will not truncate
-  input.toDF.printSchema()
-  */
+  
+  //input.toDF.show(10, false) // will not truncate
+  //input.toDF.printSchema()
+  
   
   // End SC DF
   
-
-
+  // Chop up DF to what we need (just the questions for now)
+  
+   dframe.createOrReplaceTempView("input")
+   val sqlDF = spark.sql("SELECT question1, question2, is_duplicate FROM input")
+   sqlDF.show()
    
+   // UDF to count the number of words in the question sentence
+     val qCount = udf {
+                  (set1:String) =>
+                    (set1.split(" ").toSeq.size)
+                    }
    
+   // End Count
+   
+  //  UDF to find words in common (Intersect).
+   val toRemove = "?!".toSet //filter out symbols so words can match properly
+                             // For example Word != Word?
+   val intersect = udf {
+      					   (set1:String, set2:String) =>
+                    (set1.filterNot(toRemove).split(" ")
+                        .intersect(set2.filterNot(toRemove).split(" ")).toSeq) 
+                    }
+  // End intersect
+    
+  // UDF to find the size or result arrays from defined string comparison functions.  
+    val size = udf {
+                 (item:Seq[String]) =>
+                   (item.size)
+                  }
+  // End size  
+    
+  // Function for distinct words
+    val distinct = udf {
+                      
+                     (set1:String, set2:String) =>
+                       (
+                       ((set1.filterNot(toRemove).split(" ").toList)
+                           diff
+                       (set2.filterNot(toRemove).split(" ").toList))
+                    
+                       )
+
+                   }
+    
+        
+    // Adding function-driven columns to the Data frame.
+    val wipDF = sqlDF.withColumn("Q1 Word Count", qCount($"question1"))
+                     .withColumn("Q1 Word Count", qCount($"question2"))
+                     .withColumn("intersect", intersect($"question1", $"question2"))
+                     .withColumn("NumberInCommon", size($"intersect"))
+                     .withColumn("Distinct Words", distinct($"question1", $"question2"))
+                     .withColumn("NumberDistinct", size($"Distinct Words"))
+    
+                     
+    
+    wipDF.show(false)
+    wipDF.printSchema()
+    
+    // Next, we'll format a DF for Features and Label as needed for regression.
+    
+    
+  
   
 }
