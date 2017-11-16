@@ -99,7 +99,7 @@ object QuoraPairs extends App{
   // Chop up DF to what we need (just the questions for now)
   
    dframe.createOrReplaceTempView("input")
-   val sqlDF = spark.sql("SELECT question1, question2, is_duplicate FROM input")
+   val sqlDF = spark.sql("SELECT id, question1, question2, is_duplicate FROM input")
    
    // UDF to count the number of words in the question sentence
      val qCount = udf {
@@ -127,8 +127,7 @@ object QuoraPairs extends App{
   // End size  
     
   // Function for distinct words
-    val distinct = udf {
-                      
+    val distinct = udf { 
                      (set1:String, set2:String) =>
                        (
                        ((set1.filterNot(toRemove).split(" ").toList)
@@ -136,20 +135,17 @@ object QuoraPairs extends App{
                        (set2.filterNot(toRemove).split(" ").toList))
                     
                        )
-
                    }
     
-        
     // Adding function-driven columns to the Data frame.
-    val wipDF = sqlDF.withColumn("Q1 Word Count", qCount($"question1").cast(DoubleType))
+    val wipDF = sqlDF.withColumn("id", ($"id"))
+                     .withColumn("Q1 Word Count", qCount($"question1").cast(DoubleType))
                      .withColumn("Q2 Word Count", qCount($"question2").cast(DoubleType))
                      .withColumn("intersect", intersect($"question1", $"question2"))
                      .withColumn("NumberInCommon", size($"intersect").cast(DoubleType))
                      .withColumn("Distinct Words", distinct($"question1", $"question2"))
                      .withColumn("NumberDistinct", size($"Distinct Words").cast(DoubleType))
                      .withColumn("is_duplicate", ($"is_duplicate").cast(DoubleType))
-    
-                     
     
     wipDF.show()
     wipDF.printSchema()
@@ -160,7 +156,7 @@ object QuoraPairs extends App{
                             "NumberDistinct", "is_duplicate").limit(500)
                             
         finalDF.show()
-        
+        println("Comparison DataFrame")
         
     // Use VectorAssembler to construct dataframe on label and feature columns.
         
@@ -172,6 +168,7 @@ object QuoraPairs extends App{
         val output = assembler.transform(finalDF)
                          .select("is_duplicate", "features")
                          .toDF("label", "features")
+            
                 
     // Splitting the data source into training and test data randomly. 
                           
@@ -179,17 +176,12 @@ object QuoraPairs extends App{
  
     val training = split(0) // 70%
     val test = split(1)    // 30%
-   
-    
-    //val training = output.select("is_duplicate", "features")
-      //                   .toDF("label", "features")
-                         
-          
+         
     // LR Model, fit, and transform 
   
     val model = new LogisticRegression().fit(training)
     val predictions = model.transform(test)
-  
+ 
     predictions.select("features", "prediction").show()
     
     predictions.show(false)
@@ -205,20 +197,27 @@ object QuoraPairs extends App{
    val second = udf((v: ml.Vector) => mllib.Vectors.fromML(v).toArray(1))
      
     val resultDF = predictions
-                      .withColumn("Probability 0", first($"probability"))
-                      .withColumn("Probability 1", second($"probability"))
+                      .withColumn("id", monotonicallyIncreasingId) // add index for join
+                      .withColumn("Probability_0", first($"probability"))
+                      .withColumn("Probability_1", second($"probability"))
                       .drop("probability")
-                      .withColumn("Raw Prediction 0", first($"rawPrediction"))
-                      .withColumn("Raw Prediction 1", second($"rawPrediction"))
+                      .withColumn("Raw_Prediction_0", first($"rawPrediction"))
+                      .withColumn("Raw_Prediction_1", second($"rawPrediction"))
                       .drop("rawPrediction")
                       .drop("label")
                       .drop("features")
-                      
+                  
+   // SQL join for final output
+   resultDF.createOrReplaceTempView("resultDF")
+   wipDF.createOrReplaceTempView("wipDF")
+   val finalResult = spark.sql("SELECT resultDF.id, question1, question2, prediction, Probability_0, Probability_1, Raw_Prediction_0, Raw_Prediction_1 FROM resultDF INNER JOIN wipDF ON resultDF.id = wipDF.id")
+                 
   // Raw Prediction gives a measure of confidence in each possible label (where larger = more confident).
-   resultDF.show()
-   resultDF.printSchema()
-    
-  // Outpur result DF into one (coalesce) CSV file for use in any data visualization tool. 
-  resultDF.coalesce(1).write.option("header", "true").csv(/* "OUTPUT PATH" */)
+  
+      finalResult.show()
+   
+  // Output result DF into one (coalesce) CSV file for use in any data visualization tool. 
+  
+      //resultDF.coalesce(1).write.option("header", "true").csv(/* "OUTPUT PATH" */)
  
 }
