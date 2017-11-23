@@ -45,5 +45,8 @@ libraryDependencies += "org.scalanlp" % "breeze-viz_2.11" % "0.13.1"
 
 libraryDependencies += "org.scalanlp" % "breeze-natives_2.11" % "0.13.1"
 
+libraryDependencies += "org.apache.hadoop" % "hadoop-aws" % "2.6.0"
+
+
 
 fork in run := true
